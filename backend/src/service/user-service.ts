@@ -1,7 +1,7 @@
 import { CustomError } from "../domain/custom-error";
 import { hash } from "../domain/hash";
 import { User } from "../domain/user";
-import { MongoUserRepository } from "../repository/mongo-user-repository";
+import { CosmosUserRepository } from "../repository/cosmos-user-repository";
 
 export class UserService {
 
@@ -15,7 +15,7 @@ export class UserService {
   }
 
   private async getRepo() {
-    return MongoUserRepository.getInstance();
+    return CosmosUserRepository.getInstance();
   }
 
   async addUser(email: string, password: string) {

@@ -1,12 +1,12 @@
 import { CustomError } from "../domain/custom-error";
 import { Link } from "../domain/link";
 import { SimpleUser } from "../domain/user";
-import { MongoLinkRepository } from "../repository/mongo-link-repository";
+import { CosmosLinkRepository } from "../repository/cosmos-link-repository";
 
 export class LinkService {
 
   private async getRepo() {
-    return MongoLinkRepository.getInstance();
+    return CosmosLinkRepository.getInstance();
   }
 
   async getAllMappings(user: SimpleUser) {

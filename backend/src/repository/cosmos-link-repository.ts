@@ -1,18 +1,23 @@
-import { Collection, MongoClient, Document } from "mongodb";
 import { CustomError } from "../domain/custom-error";
 import { Link } from "../domain/link";
-import { MongoUserRepository } from "./mongo-user-repository";
 import { CosmosClient, Container } from "@azure/cosmos";
+import { CosmosUserRepository } from "./cosmos-user-repository";
+
+interface CosmosDocument {
+  id: string,
+  email: string,
+  link: string
+};
 
 export class CosmosLinkRepository {
   private static instance: CosmosLinkRepository;
 
-  private async toLinkMapping(document: Document) {
-    if (!document.mapping || !document.link || !document.email) {
+  private async toLinkMapping(document: CosmosDocument) {
+    if (!document.id || !document.link || !document.email) {
       throw CustomError.internal("Invalid user document.");
     }
-    const user = await (await MongoUserRepository.getInstance()).getUser(document.email);
-    return new Link(document.link, document.mapping, user.toSimpleUser());
+    const user = await (await CosmosUserRepository.getInstance()).getUser(document.email);
+    return new Link(document.link, document.id, user.toSimpleUser());
   }
 
   constructor(private readonly container: Container) {
@@ -28,7 +33,7 @@ export class CosmosLinkRepository {
       const endpoint = process.env.COSMOS_ENDPOINT;
       const databaseName = process.env.COSMOS_DATABASE_NAME;
       const containerName = "links";
-      const partitionKeyPath = ["/email"];
+      const partitionKeyPath = ["/partition"];
 
       if (!key || !endpoint) {
         throw new Error("Azure Cosmos DB Key, Endpoint or Database Name not provided. Exiting...");
@@ -52,10 +57,11 @@ export class CosmosLinkRepository {
   async createLinkMapping(link: Link): Promise<Link> {
     const result = await this.container.items.create({
       link: link.link,
-      mapping: link.mapping,
-      email: link.user.email
+      id: link.mapping,
+      email: link.user.email,
+      partition: link.mapping.substring(0, 3)
     });
-    if (result && result.acknowledged && result.insertedId) {
+    if (result && result.statusCode >= 200 && result.statusCode < 400) {
       return this.getLinkMapping(link.mapping);
     } else {
       throw CustomError.internal("Could not create user.");
@@ -63,30 +69,39 @@ export class CosmosLinkRepository {
   }
 
   async linkMappingExists(mapping: string): Promise<boolean> {
-    const result = await this.collection.findOne({ mapping });
-    return !!result;
+    const { resource } = await this.container.item(mapping, mapping.substring(0, 3)).read();
+    return !!resource;
   }
 
   async getLinkMapping(mapping: string): Promise<Link> {
-    const result = await this.collection.findOne({ mapping });
-    if (result) {
-      return this.toLinkMapping(result)
+    const { resource } = await this.container.item(mapping, mapping.substring(0, 3)).read();
+    if (resource) {
+      return this.toLinkMapping(resource)
     } else {
       throw CustomError.notFound("Link mapping not found.");
     }
   }
 
   async getAllLinkMappings(userEmail: string): Promise<Array<Link>> {
-    const result = await this.collection.find({ email: userEmail }).toArray();
-    if (result) {
-      return Promise.all(result.map(this.toLinkMapping));
+    const querySpec = {
+      query: "select * from links l where l.email=@email",
+      parameters: [
+        {
+          name: "@email",
+          value: userEmail
+        }
+      ]
+    }
+    const { resources } = await this.container.items.query(querySpec).fetchAll()
+    if (resources) {
+      return Promise.all(resources.map(this.toLinkMapping));
     } else {
-      throw CustomError.notFound("Link mapping not found.");
+      throw CustomError.notFound("Link mappings for this account not found.");
     }
   }
 
   async removeLinkMapping(mapping: string): Promise<boolean> {
-    const result = await this.collection.deleteOne({ mapping });
-    return !!result && result.acknowledged;
+    const { statusCode } = await this.container.item(mapping).delete();
+    return statusCode === 204;
   }
 }
